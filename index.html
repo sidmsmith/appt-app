@@ -73,6 +73,24 @@
     .btn-success { background: var(--success); border: none; }
     .btn-primary:hover { background: var(--primary-hover); }
     .btn-success:hover { background: var(--success-hover); }
+    
+    /* Manhattan theme: All buttons use blue color */
+    :root.theme-manhattan .btn-primary,
+    :root.theme-manhattan .btn-success {
+      background: #3B82F6 !important;
+      border-color: #3B82F6 !important;
+    }
+    :root.theme-manhattan .btn-primary:hover,
+    :root.theme-manhattan .btn-success:hover {
+      background: #2563eb !important;
+      border-color: #2563eb !important;
+    }
+    
+    /* Manhattan theme: Table headers use blue color */
+    :root.theme-manhattan .table th {
+      background: #3B82F6 !important;
+      color: #ffffff !important;
+    }
 
     /* STATUS BAR */
     .status-bar {
