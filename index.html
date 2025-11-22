@@ -544,6 +544,23 @@
       if (!theme) return;
 
       const root = document.documentElement;
+      
+      // Remove all theme classes
+      root.classList.remove('theme-manhattan', 'theme-default', 'theme-loves', 'theme-msc', 'theme-light');
+      
+      // Add theme class for CSS-based theming
+      if (themeKey === 'manhattan') {
+        root.classList.add('theme-manhattan');
+      } else if (themeKey === 'default') {
+        root.classList.add('theme-default');
+      } else if (themeKey === 'loves') {
+        root.classList.add('theme-loves');
+      } else if (themeKey === 'msc') {
+        root.classList.add('theme-msc');
+      } else if (themeKey === 'light') {
+        root.classList.add('theme-light');
+      }
+      
       Object.entries(theme.colors).forEach(([property, value]) => {
         root.style.setProperty(property, value);
       });
@@ -569,7 +586,12 @@
     }
 
     function loadTheme() {
-      const savedTheme = localStorage.getItem('selectedTheme') || 'default';
+      let savedTheme = localStorage.getItem('selectedTheme') || 'default';
+      // Migrate old "Manhattan Associates" theme name to "Manhattan"
+      if (savedTheme === 'manhattan-associates' || savedTheme === 'Manhattan Associates') {
+        savedTheme = 'manhattan';
+        localStorage.setItem('selectedTheme', 'manhattan');
+      }
       applyTheme(savedTheme);
     }
 
