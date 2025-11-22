@@ -344,6 +344,24 @@
     const themeList = document.getElementById('themeList');
     const themeLogo = document.getElementById('themeLogo');
 
+    // URL Parameters for cross-app integration
+    const urlParams = new URLSearchParams(window.location.search);
+    const locationParam = urlParams.get('Location');
+    const organizationParam = urlParams.get('Organization');
+    const businessUnitParam = urlParams.get('BusinessUnit');
+    
+    // Store URL parameters for use
+    const urlLocation = locationParam || null;
+    const urlOrg = organizationParam || null;
+    const urlBusinessUnit = businessUnitParam || null;
+    
+    // Ensure ORG is blank on load (security) unless from URL
+    if (urlOrg) {
+      orgInput.value = urlOrg.trim();
+    } else {
+      orgInput.value = '';
+    }
+
     let token = null;
     let selectedAppt = null;
     let pendingCheckIn = null;
@@ -585,6 +603,11 @@
       
       // Auto-authenticate if Organization parameter is provided in URL
       if (urlOrg) {
+        // Hide auth section when auto-authenticating
+        const authSection = document.getElementById('authSection');
+        if (authSection) {
+          authSection.style.display = 'none';
+        }
         authenticate();
       } else {
         orgInput.focus();
