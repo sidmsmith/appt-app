@@ -578,7 +578,11 @@
     // Load theme on page load
     window.addEventListener('load', () => {
       loadTheme();
-      api('app_opened', { org: '' });
+      
+      // Track app opened with full metadata
+      trackEvent('app_opened', {});
+      
+      api('app_opened', {});
       orgInput.focus();
     });
 
@@ -616,6 +620,196 @@
       }).then(r => r.json());
     }
 
+    // ===== SESSION TRACKING =====
+    const SESSION_STORAGE_KEY = 'appt_app_session';
+    let sessionId = null;
+    let pageLoadTime = null;
+    let authAttemptCount = 0;
+    let firstAuthSuccess = true;
+
+    // Initialize session on page load
+    (function initSession() {
+      pageLoadTime = Date.now();
+      
+      // Get or create session ID
+      sessionId = sessionStorage.getItem(SESSION_STORAGE_KEY);
+      if (!sessionId) {
+        sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substring(2, 15);
+        sessionStorage.setItem(SESSION_STORAGE_KEY, sessionId);
+      }
+      
+      // Check if returning user
+      const hasSavedPreferences = localStorage.getItem('selectedTheme') !== null;
+      
+      // Store for metadata collection
+      window._appSession = {
+        sessionId,
+        pageLoadTime,
+        hasSavedPreferences
+      };
+    })();
+
+    // ===== GENERIC METADATA COLLECTION (Reusable across all apps) =====
+    function getCommonMetadata(additionalMetadata = {}) {
+      const now = Date.now();
+      const timeOnPage = pageLoadTime ? Math.floor((now - pageLoadTime) / 1000) : 0;
+      
+      // Parse user agent
+      const ua = navigator.userAgent;
+      const browserInfo = parseUserAgent(ua);
+      
+      // Get screen info
+      const screenWidth = window.screen.width;
+      const screenHeight = window.screen.height;
+      const screenResolution = `${screenWidth}x${screenHeight}`;
+      
+      // Get URL parameters
+      const urlParamsObj = {};
+      const currentUrlParams = new URLSearchParams(window.location.search);
+      for (const [key, value] of currentUrlParams.entries()) {
+        urlParamsObj[key] = value;
+      }
+      
+      // Get theme
+      const currentTheme = localStorage.getItem('selectedTheme') || 'default';
+      
+      // Build common metadata
+      const commonMetadata = {
+        // Category 1: User/Browser Information
+        user_agent: ua,
+        browser_name: browserInfo.name,
+        browser_version: browserInfo.version,
+        device_type: getDeviceType(),
+        os_name: browserInfo.os,
+        os_version: browserInfo.osVersion,
+        screen_resolution: screenResolution,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        language: navigator.language || navigator.userLanguage,
+        
+        // Category 2: Session & Context
+        session_id: sessionId,
+        page_load_time: pageLoadTime ? new Date(pageLoadTime).toISOString() : null,
+        time_on_page: timeOnPage,
+        referrer: document.referrer || null,
+        url_params: Object.keys(urlParamsObj).length > 0 ? urlParamsObj : null,
+        auto_authenticated: false, // This app doesn't use URL params for auto-auth
+        
+        // Category 3: App State & Preferences
+        theme: currentTheme,
+        has_saved_preferences: window._appSession?.hasSavedPreferences || false,
+        
+        // Category 4: Authentication Context (will be overridden by event-specific data)
+        auth_method: 'manual',
+        auth_attempt_count: authAttemptCount,
+        first_auth_success: firstAuthSuccess,
+        
+        // Category 7: Error & Debugging (will be populated if error occurs)
+        // error_code, error_message, stack_trace, api_error_details - added per event
+        
+        // Category 8: Cross-App Integration
+        source_app: null,
+        integration_type: 'direct',
+        
+        // Category 10: Geographic/Network
+        request_origin: window.location.origin,
+        
+        // Merge any additional metadata
+        ...additionalMetadata
+      };
+      
+      return commonMetadata;
+    }
+
+    // Helper: Parse user agent
+    function parseUserAgent(ua) {
+      let name = 'Unknown';
+      let version = 'Unknown';
+      let os = 'Unknown';
+      let osVersion = 'Unknown';
+      
+      // Browser detection
+      if (ua.includes('Chrome') && !ua.includes('Edg')) {
+        name = 'Chrome';
+        const match = ua.match(/Chrome\/([\d.]+)/);
+        version = match ? match[1] : 'Unknown';
+      } else if (ua.includes('Firefox')) {
+        name = 'Firefox';
+        const match = ua.match(/Firefox\/([\d.]+)/);
+        version = match ? match[1] : 'Unknown';
+      } else if (ua.includes('Safari') && !ua.includes('Chrome')) {
+        name = 'Safari';
+        const match = ua.match(/Version\/([\d.]+)/);
+        version = match ? match[1] : 'Unknown';
+      } else if (ua.includes('Edg')) {
+        name = 'Edge';
+        const match = ua.match(/Edg\/([\d.]+)/);
+        version = match ? match[1] : 'Unknown';
+      }
+      
+      // OS detection
+      if (ua.includes('Windows')) {
+        os = 'Windows';
+        const match = ua.match(/Windows NT ([\d.]+)/);
+        if (match) {
+          const ntVersion = match[1];
+          const versionMap = {
+            '10.0': '10/11',
+            '6.3': '8.1',
+            '6.2': '8',
+            '6.1': '7'
+          };
+          osVersion = versionMap[ntVersion] || ntVersion;
+        }
+      } else if (ua.includes('Mac OS X') || ua.includes('Macintosh')) {
+        os = 'macOS';
+        const match = ua.match(/Mac OS X ([\d_]+)/);
+        if (match) {
+          osVersion = match[1].replace(/_/g, '.');
+        }
+      } else if (ua.includes('Linux')) {
+        os = 'Linux';
+      } else if (ua.includes('Android')) {
+        os = 'Android';
+        const match = ua.match(/Android ([\d.]+)/);
+        osVersion = match ? match[1] : 'Unknown';
+      } else if (ua.includes('iPhone') || ua.includes('iPad')) {
+        os = 'iOS';
+        const match = ua.match(/OS ([\d_]+)/);
+        if (match) {
+          osVersion = match[1].replace(/_/g, '.');
+        }
+      }
+      
+      return { name, version, os, osVersion };
+    }
+
+    // Helper: Get device type
+    function getDeviceType() {
+      const ua = navigator.userAgent;
+      if (/tablet|ipad|playbook|silk/i.test(ua)) {
+        return 'tablet';
+      }
+      if (/mobile|iphone|ipod|android|blackberry|opera|mini|windows\sce|palm|smartphone|iemobile/i.test(ua)) {
+        return 'mobile';
+      }
+      return 'desktop';
+    }
+
+    // Home Assistant tracking helper with enhanced metadata
+    async function trackEvent(eventName, metadata = {}) {
+      try {
+        // Get common metadata and merge with event-specific metadata
+        const fullMetadata = getCommonMetadata(metadata);
+        
+        await api('ha-track', {
+          event_name: eventName,
+          metadata: fullMetadata
+        });
+      } catch (error) {
+        // Silently fail - don't interrupt user experience
+        console.warn('[HA] Failed to track event:', error);
+      }
+    }
 
     // Auth
     orgInput.addEventListener('keypress', async e => {
@@ -623,38 +817,48 @@
       const org = orgInput.value.trim();
       if (!org) return status('ORG required', 'error');
       
-      // Track auth attempt in Statsig
-      if (window.StatsigTracking && window.StatsigTracking.isInitialized()) {
-        window.StatsigTracking.logEvent('auth_attempt', {
-          org: org,
-          timestamp: new Date().toISOString()
-        });
-      }
+      // Increment auth attempt count
+      authAttemptCount++;
+      const authStartTime = Date.now();
+      
+      // Track auth attempt
+      trackEvent('auth_attempt', {
+        org: org || 'unknown',
+        auth_attempt_count: authAttemptCount
+      });
       
       status('Authenticating...');
       const res = await api('auth', { org });
+      const authDuration = Date.now() - authStartTime;
+      
       if (!res.success) {
-        // Track auth failure in Statsig
-        if (window.StatsigTracking && window.StatsigTracking.isInitialized()) {
-          window.StatsigTracking.logEvent('auth_failed', {
-            org: org,
-            error: res.error || 'Auth failed',
-            timestamp: new Date().toISOString()
-          });
-        }
+        // Track auth failure
+        trackEvent('auth_failed', {
+          org: org || 'unknown',
+          error: res.error || 'Auth failed',
+          error_message: res.error || 'Auth failed',
+          auth_attempt_count: authAttemptCount,
+          auth_duration_ms: authDuration,
+          token_received: false
+        });
+        firstAuthSuccess = false;
         return status(res.error || 'Auth failed', 'error');
       }
       
       token = res.token;
       status('Authenticated – ready!', 'success');
       
-      // Track auth success in Statsig
-      if (window.StatsigTracking && window.StatsigTracking.isInitialized()) {
-        window.StatsigTracking.logEvent('auth_success', {
-          org: org,
-          timestamp: new Date().toISOString()
-        });
-      }
+      // Track auth success
+      trackEvent('auth_success', {
+        org: org,
+        auth_attempt_count: authAttemptCount,
+        auth_duration_ms: authDuration,
+        token_received: true,
+        first_auth_success: firstAuthSuccess
+      });
+      
+      // Reset for next session (if they log out and back in)
+      firstAuthSuccess = false;
       
       mainUI.style.display = 'block';
       setTimeout(() => criteriaInput.focus(), 100);
@@ -670,40 +874,77 @@
       const criteria = criteriaInput.value.trim();
       if (!criteria) return status('Enter criteria', 'error');
       
-      // Track search attempt in Statsig
-      if (window.StatsigTracking && window.StatsigTracking.isInitialized()) {
-        window.StatsigTracking.logEvent('search_attempt', {
-          org: orgInput.value.trim() || 'unknown',
-          criteria_length: String(criteria.length),
-          timestamp: new Date().toISOString()
-        });
-      }
+      const org = orgInput.value.trim() || 'unknown';
+      
+      // Parse criteria list
+      const criteriaList = criteria.split(/[,\s;]+/).filter(c => c.trim()).map(c => c.trim().replace(/^["']|["']$/g, ''));
+      
+      const searchStartTime = Date.now();
+      
+      // Track search attempt with appointment-specific metadata
+      trackEvent('search_attempt', {
+        org: org,
+        criteria: criteria,
+        criteria_list: criteriaList.length > 0 ? criteriaList : null,
+        criteria_count: criteriaList.length,
+        criteria_length: String(criteria.length)
+      });
       
       status('Searching appointments...');
-      const res = await api('search', { org: orgInput.value.trim(), criteria, token });
+      const apiStartTime = Date.now();
+      const res = await api('search', { org, criteria, token });
+      const apiResponseTime = Date.now() - apiStartTime;
+      const searchDuration = Date.now() - searchStartTime;
+      
       if (!res.success) {
-        // Track search failure in Statsig
-        if (window.StatsigTracking && window.StatsigTracking.isInitialized()) {
-          window.StatsigTracking.logEvent('search_failed', {
-            org: orgInput.value.trim() || 'unknown',
-            error: res.error || 'Search failed',
-            timestamp: new Date().toISOString()
-          });
-        }
+        // Track search failure
+        trackEvent('search_failed', {
+          org: org,
+          criteria: criteria,
+          criteria_list: criteriaList.length > 0 ? criteriaList : null,
+          criteria_count: criteriaList.length,
+          error: res.error || 'Search failed',
+          error_message: res.error || 'Search failed',
+          search_duration_ms: searchDuration,
+          api_response_time_ms: apiResponseTime
+        });
         return status('Search failed', 'error');
       }
       
       renderResults(res.results);
       showDetailedCount(res.results.length, res.per_criteria);
       
-      // Track search success in Statsig
-      if (window.StatsigTracking && window.StatsigTracking.isInitialized()) {
-        window.StatsigTracking.logEvent('search_completed', {
-          org: orgInput.value.trim() || 'unknown',
-          results_count: String(res.results.length),
-          timestamp: new Date().toISOString()
-        });
-      }
+      // Analyze results for metadata
+      const resultsByStatus = {};
+      const resultsByType = {};
+      let hasSchedulableAppointments = false;
+      
+      res.results.forEach(appt => {
+        const statusId = appt.AppointmentStatusId || 'unknown';
+        const typeId = appt.AppointmentTypeId || 'unknown';
+        
+        resultsByStatus[statusId] = (resultsByStatus[statusId] || 0) + 1;
+        resultsByType[typeId] = (resultsByType[typeId] || 0) + 1;
+        
+        if (statusId === '3000') {
+          hasSchedulableAppointments = true;
+        }
+      });
+      
+      // Track search success with appointment-specific metadata
+      trackEvent('search_completed', {
+        org: org,
+        criteria: criteria,
+        criteria_list: criteriaList.length > 0 ? criteriaList : null,
+        criteria_count: criteriaList.length,
+        results_count: res.results.length,
+        per_criteria: res.per_criteria || {},
+        results_by_status: Object.keys(resultsByStatus).length > 0 ? resultsByStatus : null,
+        results_by_type: Object.keys(resultsByType).length > 0 ? resultsByType : null,
+        has_schedulable_appointments: hasSchedulableAppointments,
+        search_duration_ms: searchDuration,
+        api_response_time_ms: apiResponseTime
+      });
     };
 
     // DETAILED COUNT
@@ -835,49 +1076,92 @@
 
     // Perform check-in
     async function performCheckIn(appt) {
-      // Track check-in attempt in Statsig
-      if (window.StatsigTracking && window.StatsigTracking.isInitialized()) {
-        window.StatsigTracking.logEvent('checkin_attempt', {
-          org: orgInput.value.trim() || 'unknown',
-          appointment_id: appt.AppointmentId || 'unknown',
-          timestamp: new Date().toISOString()
-        });
+      const org = orgInput.value.trim() || 'unknown';
+      
+      // Extract BOL from AppointmentContents
+      let bol = null;
+      if (appt.AppointmentContents) {
+        if (Array.isArray(appt.AppointmentContents) && appt.AppointmentContents.length > 0) {
+          bol = appt.AppointmentContents[0].BillOfLadingNumber || null;
+        } else if (appt.AppointmentContents.BillOfLadingNumber) {
+          bol = appt.AppointmentContents.BillOfLadingNumber;
+        }
       }
+      
+      // Check for missing fields
+      const missingFields = [];
+      if (!appt.CarrierId) missingFields.push('CarrierId');
+      if (!appt.TrailerId) missingFields.push('TrailerId');
+      if (!appt.AppointmentTypeId) missingFields.push('AppointmentTypeId');
+      if (!appt.EquipmentTypeId) missingFields.push('EquipmentTypeId');
+      
+      const checkinStartTime = Date.now();
+      
+      // Track check-in attempt with appointment-specific metadata
+      trackEvent('checkin_attempt', {
+        org: org,
+        appointment_id: appt.AppointmentId || 'unknown',
+        carrier_id: appt.CarrierId || null,
+        trailer_id: appt.TrailerId || null,
+        equipment_type_id: appt.EquipmentTypeId || null,
+        appointment_type_id: appt.AppointmentTypeId || null,
+        bol: bol,
+        has_missing_fields: missingFields.length > 0,
+        missing_fields_list: missingFields.length > 0 ? missingFields : null
+      });
       
       status('Checking in trailer...');
       checkinBtn.disabled = true;
 
+      const apiStartTime = Date.now();
       const res = await api('checkin', { 
         appt, 
-        org: orgInput.value.trim(), 
+        org, 
         token 
       });
+      const apiResponseTime = Date.now() - apiStartTime;
+      const checkinDuration = Date.now() - checkinStartTime;
 
       if (res.success) {
         checkinMessage.textContent = `${res.message || 'Check-in successful'}`;
         checkinModal.show();
         
-        // Track check-in success in Statsig
-        if (window.StatsigTracking && window.StatsigTracking.isInitialized()) {
-          window.StatsigTracking.logEvent('checkin_completed', {
-            org: orgInput.value.trim() || 'unknown',
-            appointment_id: appt.AppointmentId || 'unknown',
-            message: res.message || 'Check-in successful',
-            timestamp: new Date().toISOString()
-          });
-        }
+        // Calculate payload size
+        const payloadSize = JSON.stringify({ appt, org, token }).length;
+        
+        // Track check-in success with appointment-specific metadata
+        trackEvent('checkin_completed', {
+          org: org,
+          appointment_id: appt.AppointmentId || 'unknown',
+          carrier_id: appt.CarrierId || null,
+          trailer_id: appt.TrailerId || null,
+          equipment_type_id: appt.EquipmentTypeId || null,
+          appointment_type_id: appt.AppointmentTypeId || null,
+          bol: bol,
+          checkin_message: res.message || 'Check-in successful',
+          checkin_duration_ms: checkinDuration,
+          api_response_time_ms: apiResponseTime,
+          api_status_code: 200, // Assuming success means 200
+          checkin_payload_size: payloadSize
+        });
         
         findBtn.click();
       } else {
-        // Track check-in failure in Statsig
-        if (window.StatsigTracking && window.StatsigTracking.isInitialized()) {
-          window.StatsigTracking.logEvent('checkin_failed', {
-            org: orgInput.value.trim() || 'unknown',
-            appointment_id: appt.AppointmentId || 'unknown',
-            error: res.error || 'Check-in failed',
-            timestamp: new Date().toISOString()
-          });
-        }
+        // Track check-in failure with appointment-specific metadata
+        trackEvent('checkin_failed', {
+          org: org,
+          appointment_id: appt.AppointmentId || 'unknown',
+          carrier_id: appt.CarrierId || null,
+          trailer_id: appt.TrailerId || null,
+          equipment_type_id: appt.EquipmentTypeId || null,
+          appointment_type_id: appt.AppointmentTypeId || null,
+          bol: bol,
+          error: res.error || 'Check-in failed',
+          error_message: res.error || 'Check-in failed',
+          checkin_duration_ms: checkinDuration,
+          api_response_time_ms: apiResponseTime,
+          api_success: false
+        });
         
         // USER-FRIENDLY ERROR
         status('Check In Failed. Please see Receiving Office.', 'error');
@@ -885,8 +1169,6 @@
       }
     }
   </script>
-  <!-- Statsig Analytics -->
-  <script src="statsig.js"></script>
   <!-- Vercel Analytics -->
   <script>
     (function() {
