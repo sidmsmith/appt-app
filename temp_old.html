@@ -73,6 +73,24 @@
     .btn-success { background: var(--success); border: none; }
     .btn-primary:hover { background: var(--primary-hover); }
     .btn-success:hover { background: var(--success-hover); }
+    
+    /* Manhattan theme: All buttons use blue color */
+    :root.theme-manhattan .btn-primary,
+    :root.theme-manhattan .btn-success {
+      background: #3B82F6 !important;
+      border-color: #3B82F6 !important;
+    }
+    :root.theme-manhattan .btn-primary:hover,
+    :root.theme-manhattan .btn-success:hover {
+      background: #2563eb !important;
+      border-color: #2563eb !important;
+    }
+    
+    /* Manhattan theme: Table headers use blue color */
+    :root.theme-manhattan .table th {
+      background: #3B82F6 !important;
+      color: #ffffff !important;
+    }
 
     /* STATUS BAR */
     .status-bar {
@@ -168,15 +186,18 @@
       right: 1rem;
       background: none;
       border: none;
-      color: var(--text);
+      color: #e0e0e0;
       padding: 0;
       cursor: pointer;
       font-size: 1.5rem;
       z-index: 1000;
-      transition: opacity 0.2s;
+      transition: transform 0.2s;
+      display: block !important;
+      visibility: visible !important;
+      opacity: 1 !important;
     }
     .theme-selector-btn:hover {
-      opacity: 0.7;
+      transform: rotate(90deg);
     }
     
     /* LOGO */
@@ -223,7 +244,7 @@
     </div>
 
     <!-- ORG -->
-    <div class="mb-3">
+    <div id="authSection" class="mb-3">
       <label class="form-label">ORG:</label>
       <input type="text" id="org" class="form-control" placeholder="Enter ORG" maxlength="20" />
       <small>Press Enter to authenticate</small>
@@ -341,6 +362,24 @@
     const themeList = document.getElementById('themeList');
     const themeLogo = document.getElementById('themeLogo');
 
+    // URL Parameters for cross-app integration
+    const urlParams = new URLSearchParams(window.location.search);
+    const locationParam = urlParams.get('Location');
+    const organizationParam = urlParams.get('Organization');
+    const businessUnitParam = urlParams.get('BusinessUnit');
+    
+    // Store URL parameters for use
+    const urlLocation = locationParam || null;
+    const urlOrg = organizationParam || null;
+    const urlBusinessUnit = businessUnitParam || null;
+    
+    // Ensure ORG is blank on load (security) unless from URL
+    if (urlOrg) {
+      orgInput.value = urlOrg.trim();
+    } else {
+      orgInput.value = '';
+    }
+
     let token = null;
     let selectedAppt = null;
     let pendingCheckIn = null;
@@ -404,7 +443,7 @@
         logo: '/loves-logo.png'
       },
       'manhattan': {
-        name: 'Manhattan Associates',
+        name: 'Manhattan',
         colors: {
           '--bg-dark': '#f5f7fa',
           '--card-bg': '#ffffff',
@@ -416,16 +455,16 @@
           '--red-bg': '#fff5f5',
           '--red-text': '#e53e3e',
           '--blue-select': '#3182ce',
-          '--success': '#38a169',
-          '--primary': '#0066cc',
-          '--primary-hover': '#0052a3',
-          '--success-hover': '#2f855a',
-          '--table-header-bg': '#0066cc',
+          '--success': '#3B82F6',
+          '--primary': '#3B82F6',
+          '--primary-hover': '#2563eb',
+          '--success-hover': '#2563eb',
+          '--table-header-bg': '#3B82F6',
           '--table-header-text': '#ffffff',
           '--input-border': '#cbd5e0',
           '--input-focus-bg': '#ffffff',
-          '--input-focus-border': '#0066cc',
-          '--input-focus-shadow': 'rgba(0, 102, 204, 0.25)',
+          '--input-focus-border': '#3B82F6',
+          '--input-focus-shadow': 'rgba(59, 130, 246, 0.25)',
           '--logo-url': 'url("/manhattan-logo.png")',
           '--logo-display': 'block'
         },
@@ -523,6 +562,23 @@
       if (!theme) return;
 
       const root = document.documentElement;
+      
+      // Remove all theme classes
+      root.classList.remove('theme-manhattan', 'theme-default', 'theme-loves', 'theme-msc', 'theme-light');
+      
+      // Add theme class for CSS-based theming
+      if (themeKey === 'manhattan') {
+        root.classList.add('theme-manhattan');
+      } else if (themeKey === 'default') {
+        root.classList.add('theme-default');
+      } else if (themeKey === 'loves') {
+        root.classList.add('theme-loves');
+      } else if (themeKey === 'msc') {
+        root.classList.add('theme-msc');
+      } else if (themeKey === 'light') {
+        root.classList.add('theme-light');
+      }
+      
       Object.entries(theme.colors).forEach(([property, value]) => {
         root.style.setProperty(property, value);
       });
@@ -548,7 +604,12 @@
     }
 
     function loadTheme() {
-      const savedTheme = localStorage.getItem('selectedTheme') || 'default';
+      let savedTheme = localStorage.getItem('selectedTheme') || 'default';
+      // Migrate old "Manhattan Associates" theme name to "Manhattan"
+      if (savedTheme === 'manhattan-associates' || savedTheme === 'Manhattan Associates') {
+        savedTheme = 'manhattan';
+        localStorage.setItem('selectedTheme', 'manhattan');
+      }
       applyTheme(savedTheme);
     }
 
@@ -578,8 +639,19 @@
     // Load theme on page load
     window.addEventListener('load', () => {
       loadTheme();
-      api('app_opened', { org: '' });
-      orgInput.focus();
+      api('app_opened', { org: urlOrg || '' });
+      
+      // Auto-authenticate if Organization parameter is provided in URL
+      if (urlOrg) {
+        // Hide auth section when auto-authenticating
+        const authSection = document.getElementById('authSection');
+        if (authSection) {
+          authSection.style.display = 'none';
+        }
+        authenticate();
+      } else {
+        orgInput.focus();
+      }
     });
 
     // DROPDOWN CONFIG
@@ -618,46 +690,29 @@
 
 
     // Auth
-    orgInput.addEventListener('keypress', async e => {
-      if (e.key !== 'Enter') return;
+    async function authenticate() {
       const org = orgInput.value.trim();
-      if (!org) return status('ORG required', 'error');
-      
-      // Track auth attempt in Statsig
-      if (window.StatsigTracking && window.StatsigTracking.isInitialized()) {
-        window.StatsigTracking.logEvent('auth_attempt', {
-          org: org,
-          timestamp: new Date().toISOString()
-        });
+      if (!org) {
+        status('ORG required', 'error');
+        mainUI.style.display = 'none';
+        return;
       }
-      
       status('Authenticating...');
       const res = await api('auth', { org });
       if (!res.success) {
-        // Track auth failure in Statsig
-        if (window.StatsigTracking && window.StatsigTracking.isInitialized()) {
-          window.StatsigTracking.logEvent('auth_failed', {
-            org: org,
-            error: res.error || 'Auth failed',
-            timestamp: new Date().toISOString()
-          });
-        }
-        return status(res.error || 'Auth failed', 'error');
+        status(res.error || 'Auth failed', 'error');
+        mainUI.style.display = 'none';
+        return;
       }
-      
       token = res.token;
       status('Authenticated – ready!', 'success');
-      
-      // Track auth success in Statsig
-      if (window.StatsigTracking && window.StatsigTracking.isInitialized()) {
-        window.StatsigTracking.logEvent('auth_success', {
-          org: org,
-          timestamp: new Date().toISOString()
-        });
-      }
-      
       mainUI.style.display = 'block';
       setTimeout(() => criteriaInput.focus(), 100);
+    }
+
+    orgInput.addEventListener('keypress', async e => {
+      if (e.key !== 'Enter') return;
+      await authenticate();
     });
 
     // Enter → Search
@@ -669,41 +724,11 @@
     findBtn.onclick = async () => {
       const criteria = criteriaInput.value.trim();
       if (!criteria) return status('Enter criteria', 'error');
-      
-      // Track search attempt in Statsig
-      if (window.StatsigTracking && window.StatsigTracking.isInitialized()) {
-        window.StatsigTracking.logEvent('search_attempt', {
-          org: orgInput.value.trim() || 'unknown',
-          criteria_length: String(criteria.length),
-          timestamp: new Date().toISOString()
-        });
-      }
-      
       status('Searching appointments...');
       const res = await api('search', { org: orgInput.value.trim(), criteria, token });
-      if (!res.success) {
-        // Track search failure in Statsig
-        if (window.StatsigTracking && window.StatsigTracking.isInitialized()) {
-          window.StatsigTracking.logEvent('search_failed', {
-            org: orgInput.value.trim() || 'unknown',
-            error: res.error || 'Search failed',
-            timestamp: new Date().toISOString()
-          });
-        }
-        return status('Search failed', 'error');
-      }
-      
+      if (!res.success) return status('Search failed', 'error');
       renderResults(res.results);
       showDetailedCount(res.results.length, res.per_criteria);
-      
-      // Track search success in Statsig
-      if (window.StatsigTracking && window.StatsigTracking.isInitialized()) {
-        window.StatsigTracking.logEvent('search_completed', {
-          org: orgInput.value.trim() || 'unknown',
-          results_count: String(res.results.length),
-          timestamp: new Date().toISOString()
-        });
-      }
     };
 
     // DETAILED COUNT
@@ -835,15 +860,6 @@
 
     // Perform check-in
     async function performCheckIn(appt) {
-      // Track check-in attempt in Statsig
-      if (window.StatsigTracking && window.StatsigTracking.isInitialized()) {
-        window.StatsigTracking.logEvent('checkin_attempt', {
-          org: orgInput.value.trim() || 'unknown',
-          appointment_id: appt.AppointmentId || 'unknown',
-          timestamp: new Date().toISOString()
-        });
-      }
-      
       status('Checking in trailer...');
       checkinBtn.disabled = true;
 
@@ -856,48 +872,13 @@
       if (res.success) {
         checkinMessage.textContent = `${res.message || 'Check-in successful'}`;
         checkinModal.show();
-        
-        // Track check-in success in Statsig
-        if (window.StatsigTracking && window.StatsigTracking.isInitialized()) {
-          window.StatsigTracking.logEvent('checkin_completed', {
-            org: orgInput.value.trim() || 'unknown',
-            appointment_id: appt.AppointmentId || 'unknown',
-            message: res.message || 'Check-in successful',
-            timestamp: new Date().toISOString()
-          });
-        }
-        
         findBtn.click();
       } else {
-        // Track check-in failure in Statsig
-        if (window.StatsigTracking && window.StatsigTracking.isInitialized()) {
-          window.StatsigTracking.logEvent('checkin_failed', {
-            org: orgInput.value.trim() || 'unknown',
-            appointment_id: appt.AppointmentId || 'unknown',
-            error: res.error || 'Check-in failed',
-            timestamp: new Date().toISOString()
-          });
-        }
-        
         // USER-FRIENDLY ERROR
         status('Check In Failed. Please see Receiving Office.', 'error');
         checkinBtn.disabled = false;
       }
     }
-  </script>
-  <!-- Statsig Analytics -->
-  <script src="statsig.js"></script>
-  <!-- Vercel Analytics -->
-  <script>
-    (function() {
-      const script = document.createElement('script');
-      script.src = '/_vercel/insights/script.js';
-      script.defer = true;
-      script.onerror = function() {
-        console.warn('Vercel Analytics script failed to load. Make sure Analytics is enabled in Vercel dashboard and the app is redeployed.');
-      };
-      document.head.appendChild(script);
-    })();
   </script>
 </body>
 </html>

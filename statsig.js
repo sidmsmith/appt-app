@@ -164,7 +164,7 @@ function getAppInfo() {
   const title = document.title || '';
   // Extract version from title like "Check In Kiosk v2.2.0"
   const versionMatch = title.match(/v(\d+\.\d+\.\d+)/i);
-  const version = versionMatch ? versionMatch[1] : '2.2.0'; // Default from title
+  const version = versionMatch ? versionMatch[1] : '2.3.0'; // Default from title
   // Extract app name (everything before "v" or just use title)
   const appNameMatch = title.match(/^(.+?)\s+v\d+/i);
   const appName = appNameMatch ? appNameMatch[1].trim() : (title.split(' v')[0] || 'Check In Kiosk');
