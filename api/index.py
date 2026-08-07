@@ -201,10 +201,10 @@ def usage_track():
         metadata = data.get('metadata', {})
         
         payload = {
+            **metadata,
             "event_name": event_name,
             "app_name": APP_NAME,
             "app_version": APP_VERSION,
-            **metadata,
             "timestamp": datetime.now().isoformat()
         }
         
